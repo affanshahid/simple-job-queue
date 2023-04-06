@@ -48,7 +48,6 @@ where
                 },
                 Err(err) => {
                     // TODO: Make configurable
-                    dbg!(err);
                     tokio::time::sleep(Duration::from_secs(5)).await;
                 }
             };
