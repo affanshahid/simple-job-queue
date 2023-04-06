@@ -1,9 +1,19 @@
 # Simple Job Queue
-*WIP*
 
-A dead simple (and probably very ineffecient) async job queue using [Redis](https://redis.io). Built for my own use-case, use at your own peril. Currently only supports [Tokio](https://tokio.rs/).
+_WIP_
+
+A simple (and probably very ineffecient) async distributed job queue with configurable backends. Built for my own use-case, use at your own peril. Currently only supports [Tokio](https://tokio.rs/).
+
+| Feature             | Redis |
+| ------------------- | ----- |
+| Job submission      | ✅    |
+| Job processing      | ✅    |
+| Distributed workers | ✅    |
+| Reseliency          | ✅    |
+| Retries             | ❌    |
 
 ## Installation
+
 ```
 cargo add simple-job-queue
 ```
