@@ -1,179 +1,112 @@
-use std::marker::PhantomData;
+use std::{marker::PhantomData, time::Duration};
 
 use async_trait::async_trait;
-use redis::{
-    aio::Connection, AsyncCommands, Client, Direction, ErrorKind, FromRedisValue,
-    IntoConnectionInfo, RedisError, ToRedisArgs,
-};
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use tokio::task::JoinHandle;
-use uuid::Uuid;
 
-use crate::error::{JobError, JobQueueError};
+use crate::{
+    error::{JobError, JobQueueError},
+    Job,
+};
 
-const MAIN_QUEUE: &str = "main";
-const WORKER_QUEUE: &str = "worker";
-
-#[derive(Serialize, Deserialize)]
-pub struct Job<T> {
-    pub id: Uuid,
-    pub data: T,
-}
-
-impl<T> Job<T> {
-    pub fn new(data: T) -> Self {
-        Self {
-            id: Uuid::new_v4(),
-            data,
-        }
-    }
-}
-
-impl<T> ToRedisArgs for Job<T>
-where
-    T: Serialize,
-{
-    fn write_redis_args<W>(&self, out: &mut W)
-    where
-        W: ?Sized + redis::RedisWrite,
-    {
-        out.write_arg(&serde_json::to_vec(self).expect("serialization failed"));
-    }
-}
-
-impl<T> FromRedisValue for Job<T>
-where
-    T: DeserializeOwned,
-{
-    fn from_redis_value(v: &redis::Value) -> redis::RedisResult<Self> {
-        match v {
-            redis::Value::Data(data) => serde_json::from_slice(&data).map_err(|e| {
-                RedisError::from((
-                    ErrorKind::TypeError,
-                    "JSON conversion failed.",
-                    e.to_string(),
-                ))
-            }),
-            _ => Err(RedisError::from((
-                ErrorKind::TypeError,
-                "Response type not string compatible.",
-            ))),
-        }
-    }
+#[async_trait]
+pub trait JobQueueBackend<T>: Clone {
+    async fn produce(&self, job: Job<T>) -> Result<(), JobQueueError>;
+    async fn consume(&self) -> Result<Job<T>, JobQueueError>;
+    async fn done(&self, job: &Job<T>);
+    async fn failed(&self, job: &Job<T>);
 }
 
 #[async_trait]
-pub trait Processor {
-    type T;
-
-    async fn process(&mut self, job: Job<Self::T>) -> Result<(), JobError>;
+pub trait Processor<T> {
+    async fn process(&mut self, job: &Job<T>) -> Result<(), JobError>;
 }
 
-struct JobQueueWorker<P>
+struct JobQueueWorker<T, B, P>
 where
-    P: Processor,
+    B: JobQueueBackend<T>,
+    P: Processor<T>,
 {
-    connection: Connection,
-    name: String,
+    backend: B,
     processor: P,
+    _t: PhantomData<T>,
 }
 
-impl<P> JobQueueWorker<P>
+impl<T, B, P> JobQueueWorker<T, B, P>
 where
-    P: Processor,
-    P::T: DeserializeOwned,
+    B: JobQueueBackend<T>,
+    P: Processor<T>,
 {
     async fn start(&mut self) -> () {
         loop {
-            match self
-                .connection
-                .blmove(
-                    format!("{}_{}", self.name, MAIN_QUEUE),
-                    format!("{}_{}", self.name, WORKER_QUEUE),
-                    Direction::Right,
-                    Direction::Left,
-                    0,
-                )
-                .await
-            {
-                Ok(job) => match self.processor.process(job).await {
-                    Ok(_) => {
-                        self.connection
-                            .lpop::<_, String>(format!("{}_{}", self.name, WORKER_QUEUE), None)
-                            .await
-                            .expect("Failed to pop from worker queue");
-                    }
-                    Err(_) => todo!("Handle retries"),
+            match self.backend.consume().await {
+                Ok(job) => match self.processor.process(&job).await {
+                    Ok(_) => self.backend.done(&job).await,
+                    Err(_) => self.backend.failed(&job).await,
                 },
-                Err(_) => todo!("Handle retries"),
-            }
+                Err(_) => {
+                    // TODO: Make configurable
+                    tokio::time::sleep(Duration::from_secs(5)).await;
+                }
+            };
         }
     }
 }
 
-pub struct JobQueue<T> {
-    client: Client,
-    name: String,
-    worker_handle: Option<JoinHandle<()>>,
-    _p: PhantomData<*const T>,
-}
-
-impl<T> JobQueue<T> {
-    pub fn new<R: IntoConnectionInfo>(
-        connection_params: R,
-        name: String,
-    ) -> Result<Self, JobQueueError> {
-        let client = Client::open(connection_params)?;
-
-        Ok(Self {
-            client,
-            name,
-            worker_handle: None,
-            _p: PhantomData,
-        })
-    }
-}
-
-impl<T> JobQueue<T>
+pub struct JobQueue<T, B>
 where
-    T: Serialize + DeserializeOwned + Send + Sync + 'static,
+    B: JobQueueBackend<T>,
 {
-    pub async fn start<P>(&mut self, processor: P) -> Result<(), JobQueueError>
-    where
-        P: Processor<T = T> + Send + Sync + 'static,
-    {
-        if let Some(_) = self.worker_handle {
-            panic!("start called twice");
+    backend: B,
+    worker_handle: Option<JoinHandle<()>>,
+    _t: PhantomData<*const T>,
+}
+
+impl<T, B> JobQueue<T, B>
+where
+    B: JobQueueBackend<T>,
+{
+    pub fn new(backend: B) -> Self {
+        Self {
+            backend,
+            worker_handle: None,
+            _t: PhantomData,
         }
-
-        let mut worker = JobQueueWorker {
-            connection: self.client.get_async_connection().await?,
-            name: self.name.clone(),
-            processor,
-        };
-
-        let handle = tokio::spawn(async move {
-            worker.start().await;
-        });
-
-        self.worker_handle = Some(handle);
-
-        Ok(())
     }
 
     pub async fn submit(&self, job: Job<T>) -> Result<(), JobQueueError> {
-        let mut conn = self.client.get_async_connection().await?;
-        conn.lpush(format!("{}_{}", self.name, MAIN_QUEUE), &job)
-            .await?;
+        self.backend.produce(job).await?;
 
         Ok(())
     }
 }
 
-impl<T> Drop for JobQueue<T> {
+impl<T, B> JobQueue<T, B>
+where
+    T: Send + Sync + 'static,
+    B: JobQueueBackend<T> + Send + Sync + 'static,
+{
+    pub async fn start<P>(&mut self, processor: P) -> ()
+    where
+        P: Processor<T> + Send + Sync + 'static,
+    {
+        let mut worker = JobQueueWorker {
+            backend: self.backend.clone(),
+            processor,
+            _t: PhantomData,
+        };
+
+        let handle = tokio::spawn(async move { worker.start().await });
+        self.worker_handle = Some(handle);
+    }
+}
+
+impl<T, B> Drop for JobQueue<T, B>
+where
+    B: JobQueueBackend<T>,
+{
     fn drop(&mut self) {
-        if let Some(worker_handle) = self.worker_handle.take() {
-            worker_handle.abort();
+        if let Some(handle) = self.worker_handle.take() {
+            handle.abort();
         }
     }
 }
