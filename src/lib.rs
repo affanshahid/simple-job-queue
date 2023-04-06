@@ -1,5 +1,10 @@
 pub mod error;
+
+#[cfg(feature = "redis")]
 pub mod job_queue;
+
+#[cfg(feature = "redis")]
+pub use job_queue::*;
 
 //////////////////////////////////////////////////
 pub fn add(left: usize, right: usize) -> usize {

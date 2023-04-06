@@ -1,7 +1,14 @@
 [package]
 name = "simple-job-queue"
+description = "A simple job queue"
 version = "0.1.0"
 edition = "2021"
+homepage = "https://github.com/affanshahid/simple-job-queue"
+readme = "README.md"
+documentation = "https://docs.rs/simple-job-queue"
+repository = "https://github.com/affanshahid/simple-job-queue"
+keywords = ["jobs", "job-queue"]
+license = "MIT"
 
 [dependencies]
 async-trait = "0.1.68"
