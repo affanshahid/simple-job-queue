@@ -9,6 +9,7 @@ documentation = "https://docs.rs/simple-job-queue"
 repository = "https://github.com/affanshahid/simple-job-queue"
 keywords = ["jobs", "job-queue"]
 license = "MIT"
+include = ["src/*.rs", "!src/main.rs", "Cargo.toml"]
 
 [dependencies]
 async-trait = "0.1.68"
