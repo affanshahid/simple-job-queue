@@ -25,7 +25,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use simple_job_queue::{error::JobError, redis::RedisJobQueueBackend, Job, JobQueue, Processor};
+use simple_job_queue::{error::JobError, redis::RedisJobQueueBackend, Job, JobError, JobQueue, Processor};
 
 #[derive(Serialize, Deserialize)]
 pub struct Data {
