@@ -42,7 +42,7 @@ async fn main() {
     .unwrap();
 
     let mut queue: JobQueue<Data, RedisJobQueueBackend> = JobQueue::new(backend);
-    queue.start(DataProcessor).await;
+    queue.start(DataProcessor).await.unwrap();
 
     queue.submit(Job::new(Data { field: 1 })).await.unwrap();
     queue.submit(Job::new(Data { field: 2 })).await.unwrap();

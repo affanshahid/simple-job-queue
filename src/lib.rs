@@ -2,6 +2,7 @@ pub mod error;
 pub mod job;
 pub mod job_queue;
 
+pub use error::*;
 pub use job::*;
 pub use job_queue::*;
 

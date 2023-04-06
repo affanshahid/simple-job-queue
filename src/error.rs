@@ -15,6 +15,7 @@ impl Error for JobError {}
 
 #[derive(Debug)]
 pub enum JobQueueError {
+    MalformedJob,
     #[cfg(feature = "redis")]
     RedisError(RedisError),
 }
@@ -22,6 +23,7 @@ pub enum JobQueueError {
 impl Display for JobQueueError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            JobQueueError::MalformedJob => write!(f, "Malformed job"),
             #[cfg(feature = "redis")]
             JobQueueError::RedisError(error) => error.fmt(f),
         }

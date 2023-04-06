@@ -10,10 +10,13 @@ use crate::{
 
 #[async_trait]
 pub trait JobQueueBackend<T>: Clone {
+    type Context: Send;
+
+    async fn setup(&self) -> Result<(), JobQueueError>;
     async fn produce(&self, job: Job<T>) -> Result<(), JobQueueError>;
-    async fn consume(&self) -> Result<Job<T>, JobQueueError>;
-    async fn done(&self, job: &Job<T>);
-    async fn failed(&self, job: &Job<T>);
+    async fn consume(&self) -> Result<(Job<T>, Self::Context), JobQueueError>;
+    async fn done(&self, job: Job<T>, ctx: Self::Context);
+    async fn failed(&self, job: Job<T>, ctx: Self::Context);
 }
 
 #[async_trait]
@@ -39,12 +42,13 @@ where
     async fn start(&mut self) -> () {
         loop {
             match self.backend.consume().await {
-                Ok(job) => match self.processor.process(&job).await {
-                    Ok(_) => self.backend.done(&job).await,
-                    Err(_) => self.backend.failed(&job).await,
+                Ok((job, ctx)) => match self.processor.process(&job).await {
+                    Ok(_) => self.backend.done(job, ctx).await,
+                    Err(_) => self.backend.failed(job, ctx).await,
                 },
-                Err(_) => {
+                Err(err) => {
                     // TODO: Make configurable
+                    dbg!(err);
                     tokio::time::sleep(Duration::from_secs(5)).await;
                 }
             };
@@ -85,10 +89,12 @@ where
     T: Send + Sync + 'static,
     B: JobQueueBackend<T> + Send + Sync + 'static,
 {
-    pub async fn start<P>(&mut self, processor: P) -> ()
+    pub async fn start<P>(&mut self, processor: P) -> Result<(), JobQueueError>
     where
         P: Processor<T> + Send + Sync + 'static,
     {
+        self.backend.setup().await?;
+
         let mut worker = JobQueueWorker {
             backend: self.backend.clone(),
             processor,
@@ -97,6 +103,8 @@ where
 
         let handle = tokio::spawn(async move { worker.start().await });
         self.worker_handle = Some(handle);
+
+        Ok(())
     }
 }
 
