@@ -46,7 +46,7 @@ where
                     Ok(_) => self.backend.done(job, ctx).await,
                     Err(_) => self.backend.failed(job, ctx).await,
                 },
-                Err(err) => {
+                Err(_) => {
                     // TODO: Make configurable
                     tokio::time::sleep(Duration::from_secs(5)).await;
                 }
