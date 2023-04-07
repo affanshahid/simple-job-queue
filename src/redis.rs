@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use redis::{
     aio::Connection,
     streams::{StreamReadOptions, StreamReadReply},
-    AsyncCommands, Client, IntoConnectionInfo, RedisError, Value,
+    AsyncCommands, Client, IntoConnectionInfo, Value,
 };
 use serde::{de::DeserializeOwned, Serialize};
 use uuid::Uuid;
@@ -28,7 +28,7 @@ impl RedisJobQueueBackend {
     pub fn new<I: IntoConnectionInfo>(
         connection_info: I,
         name: String,
-    ) -> Result<Self, RedisError> {
+    ) -> Result<Self, JobQueueError> {
         Ok(Self {
             client: Client::open(connection_info)?,
             name,
