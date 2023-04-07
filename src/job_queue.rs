@@ -61,7 +61,7 @@ where
 {
     backend: B,
     worker_handle: Option<JoinHandle<()>>,
-    _t: PhantomData<*const T>,
+    _t: PhantomData<T>,
 }
 
 impl<T, B> JobQueue<T, B>
