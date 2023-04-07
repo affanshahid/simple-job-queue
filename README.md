@@ -10,7 +10,7 @@ A simple (and probably very ineffecient) async distributed job queue with config
 | Job processing      | ✅    |
 | Distributed workers | ✅    |
 | Reseliency          | ✅    |
-| Retries             | ❌    |
+| Retries             | 🟡    |
 
 ## Installation
 
