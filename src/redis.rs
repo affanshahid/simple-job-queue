@@ -13,8 +13,38 @@ use crate::{error::JobQueueError, Job, JobQueueBackend};
 
 const KEY_DATA: &str = "data";
 
-pub struct RedisJobContext {
-    id: String,
+#[derive(Clone)]
+pub struct RedisJobQueueBackendOptions {
+    min_idle_time: Duration,
+    new_delivery_fetch_timeout: Duration,
+    polling_interval: Duration,
+}
+
+impl RedisJobQueueBackendOptions {
+    pub fn min_idle_time(mut self, d: Duration) -> Self {
+        self.min_idle_time = d;
+        self
+    }
+
+    pub fn new_delivery_fetch_timeout(mut self, d: Duration) -> Self {
+        self.new_delivery_fetch_timeout = d;
+        self
+    }
+
+    pub fn polling_interval(mut self, d: Duration) -> Self {
+        self.polling_interval = d;
+        self
+    }
+}
+
+impl Default for RedisJobQueueBackendOptions {
+    fn default() -> Self {
+        Self {
+            min_idle_time: Duration::from_secs(60),
+            new_delivery_fetch_timeout: Duration::from_secs(5),
+            polling_interval: Duration::from_secs(5),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -22,17 +52,20 @@ pub struct RedisJobQueueBackend {
     client: Client,
     name: String,
     consumer_id: Uuid,
+    options: RedisJobQueueBackendOptions,
 }
 
 impl RedisJobQueueBackend {
     pub fn new<I: IntoConnectionInfo>(
         connection_info: I,
         name: String,
+        options: RedisJobQueueBackendOptions,
     ) -> Result<Self, JobQueueError> {
         Ok(Self {
             client: Client::open(connection_info)?,
             name,
             consumer_id: Uuid::new_v4(),
+            options,
         })
     }
 }
@@ -42,7 +75,7 @@ impl RedisJobQueueBackend {
         &self,
         conn: &mut Connection,
         id: &str,
-        block: i32,
+        block: i64,
     ) -> Result<Option<(Job<T>, RedisJobContext)>, JobQueueError>
     where
         T: DeserializeOwned,
@@ -70,6 +103,10 @@ impl RedisJobQueueBackend {
             })
             .transpose()
     }
+}
+
+pub struct RedisJobContext {
+    id: String,
 }
 
 #[async_trait]
@@ -108,8 +145,7 @@ where
             .arg(&self.name)
             .arg(&self.name)
             .arg(&self.consumer_id.to_string())
-            // TODO: Make configurable
-            .arg(60_000)
+            .arg(self.options.min_idle_time.as_millis() as i64)
             .arg(0)
             .arg("COUNT")
             .arg(1)
@@ -130,11 +166,16 @@ where
                     break Ok((job, ctx));
                 }
                 None => {
-                    // TODO: Make configurable
-                    match self.read_job::<T>(&mut conn, ">", 5_000).await? {
+                    match self
+                        .read_job::<T>(
+                            &mut conn,
+                            ">",
+                            self.options.new_delivery_fetch_timeout.as_millis() as i64,
+                        )
+                        .await?
+                    {
                         Some((job, _)) if !job.should_process() => {
-                            // TODO: Make configurable
-                            tokio::time::sleep(Duration::from_secs(5)).await;
+                            tokio::time::sleep(self.options.polling_interval).await;
                             pending_id = "0".to_string();
                             continue;
                         }

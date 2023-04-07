@@ -24,6 +24,26 @@ pub trait Processor<T> {
     async fn process(&mut self, job: &Job<T>) -> Result<(), JobError>;
 }
 
+#[derive(Clone)]
+pub struct JobQueueOptions {
+    consumption_failure_backoff_interval: Duration,
+}
+
+impl JobQueueOptions {
+    pub fn consumption_failure_backoff_interval(mut self, d: Duration) -> Self {
+        self.consumption_failure_backoff_interval = d;
+        self
+    }
+}
+
+impl Default for JobQueueOptions {
+    fn default() -> Self {
+        Self {
+            consumption_failure_backoff_interval: Duration::from_secs(5),
+        }
+    }
+}
+
 struct JobQueueWorker<T, B, P>
 where
     B: JobQueueBackend<T>,
@@ -31,6 +51,7 @@ where
 {
     backend: B,
     processor: P,
+    options: JobQueueOptions,
     _t: PhantomData<T>,
 }
 
@@ -47,8 +68,7 @@ where
                     Err(_) => self.backend.failed(job, ctx).await,
                 },
                 Err(_) => {
-                    // TODO: Make configurable
-                    tokio::time::sleep(Duration::from_secs(5)).await;
+                    tokio::time::sleep(self.options.consumption_failure_backoff_interval).await;
                 }
             };
         }
@@ -61,6 +81,7 @@ where
 {
     backend: B,
     worker_handle: Option<JoinHandle<()>>,
+    options: JobQueueOptions,
     _t: PhantomData<T>,
 }
 
@@ -68,10 +89,11 @@ impl<T, B> JobQueue<T, B>
 where
     B: JobQueueBackend<T>,
 {
-    pub fn new(backend: B) -> Self {
+    pub fn new(backend: B, options: JobQueueOptions) -> Self {
         Self {
             backend,
             worker_handle: None,
+            options,
             _t: PhantomData,
         }
     }
@@ -97,6 +119,7 @@ where
         let mut worker = JobQueueWorker {
             backend: self.backend.clone(),
             processor,
+            options: self.options.clone(),
             _t: PhantomData,
         };
 

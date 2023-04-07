@@ -22,11 +22,14 @@ cargo add simple-job-queue
 ## Usage
 
 ```rust
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use simple_job_queue::{error::JobError, redis::RedisJobQueueBackend, Job, JobError, JobQueue, Processor};
+use simple_job_queue::{
+    redis::{RedisJobQueueBackend, RedisJobQueueBackendOptions},
+    Job, JobError, JobQueue, JobQueueOptions, Processor,
+};
 
 #[derive(Serialize, Deserialize)]
 pub struct Data {
@@ -47,17 +50,17 @@ impl Processor<Data> for DataProcessor {
 #[tokio::main]
 async fn main() {
     let backend = RedisJobQueueBackend::new(
-        "redis://127.0.0.1",
+        "redis://:speakfriendandenter@droplet01.affanshahid.dev",
         "queue_name".to_string(),
+        RedisJobQueueBackendOptions::default(),
     )
     .unwrap();
 
-    let mut queue: JobQueue<Data, RedisJobQueueBackend> = JobQueue::new(backend);
-    queue.start(DataProcessor).await.unwrap();
+    let mut queue: JobQueue<Data, RedisJobQueueBackend> =
+        JobQueue::new(backend, JobQueueOptions::default());
 
+    queue.start(DataProcessor).await.unwrap();
     queue.submit(Job::new(Data { field: 1 })).await.unwrap();
-    queue.submit(Job::new(Data { field: 2 })).await.unwrap();
-    queue.submit(Job::new(Data { field: 3 })).await.unwrap();
 
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -69,6 +72,6 @@ async fn main() {
         .await
         .unwrap();
 
-    tokio::time::sleep(Duration::from_secs(30)).await;
+    tokio::time::sleep(Duration::from_secs(15)).await;
 }
 ```
