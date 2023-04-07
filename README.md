@@ -10,6 +10,7 @@ A simple (and probably very ineffecient) async distributed job queue with config
 | Job processing      | ✅    |
 | Distributed workers | ✅    |
 | Reseliency          | ✅    |
+| Delayed execution   | ✅    |
 | Retries             | 🟡    |
 
 ## Installation
@@ -57,6 +58,16 @@ async fn main() {
     queue.submit(Job::new(Data { field: 1 })).await.unwrap();
     queue.submit(Job::new(Data { field: 2 })).await.unwrap();
     queue.submit(Job::new(Data { field: 3 })).await.unwrap();
+
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("Time went backwards")
+        .as_millis();
+
+    queue
+        .submit(Job::new_delayed(Data { field: 100 }, now + 10_000))
+        .await
+        .unwrap();
 
     tokio::time::sleep(Duration::from_secs(10)).await;
 }

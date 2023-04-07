@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use async_trait::async_trait;
 use redis::{
     aio::Connection,
@@ -40,7 +42,7 @@ impl RedisJobQueueBackend {
         &self,
         conn: &mut Connection,
         id: &str,
-        block: bool,
+        block: i32,
     ) -> Result<Option<(Job<T>, RedisJobContext)>, JobQueueError>
     where
         T: DeserializeOwned,
@@ -49,15 +51,16 @@ impl RedisJobQueueBackend {
             .group(&self.name, &self.consumer_id.to_string())
             .count(1);
 
-        if block {
-            options = options.block(0);
+        if block > 0 {
+            options = options.block(block as usize);
         }
 
         conn.xread_options::<_, _, StreamReadReply>(&[&self.name], &[id], &options)
             .await?
-            .keys[0]
-            .ids
+            .keys
             .get(0)
+            .map(|k| k.ids.get(0))
+            .flatten()
             .map(|v| {
                 let ctx = RedisJobContext { id: v.id.clone() };
                 match v.get(KEY_DATA) {
@@ -114,9 +117,36 @@ where
             .query_async::<_, Value>(&mut conn)
             .await?;
 
-        match self.read_job(&mut conn, "0", false).await? {
-            Some(res) => Ok(res),
-            None => Ok(self.read_job(&mut conn, ">", true).await?.unwrap()),
+        let mut pending_id = "0".to_string();
+        loop {
+            let result = self.read_job::<T>(&mut conn, &pending_id, -1).await?;
+
+            match result {
+                Some((job, ctx)) if !job.should_process() => {
+                    pending_id = ctx.id;
+                    continue;
+                }
+                Some((job, ctx)) => {
+                    break Ok((job, ctx));
+                }
+                None => {
+                    // TODO: Make configurable
+                    match self.read_job::<T>(&mut conn, ">", 5_000).await? {
+                        Some((job, _)) if !job.should_process() => {
+                            // TODO: Make configurable
+                            tokio::time::sleep(Duration::from_secs(5)).await;
+                            pending_id = "0".to_string();
+                            continue;
+                        }
+                        Some((job, ctx)) => {
+                            break Ok((job, ctx));
+                        }
+                        None => {
+                            pending_id = "0".to_string();
+                        }
+                    }
+                }
+            }
         }
     }
 
